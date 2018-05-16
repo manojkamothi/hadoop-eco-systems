@@ -1,0 +1,185 @@
+------ First of all need to install java one your single node cluster:
+
+sudo apt-add-repository ppa:webupd8team/java
+sudo apt-get update
+sudo apt-get install oracle-java8-installer
+
+verify:  java -version
+
+java version "1.8.0_171"
+Java(TM) SE Runtime Environment (build 1.8.0_171-b11)
+Java HotSpot(TM) 64-Bit Server VM (build 25.171-b11, mixed mode)
+
+- Open /etc/profile and set java home at last line
+
+export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+
+
+------ Installing Software
+If your cluster doesn’t have the requisite software you will need to install it.
+
+For example on Ubuntu Linux:
+
+  $ sudo apt-get install ssh
+  $ sudo apt-get install rsync
+
+
+----- Adding a dedicated Hadoop user
+	$ sudo addgroup hadoop
+	$ sudo adduser --ingroup hadoop hduser
+
+
+--- Create and Setup SSH Certificates
+	$ su hduser
+	$ ssh-keygen -t rsa -P ""
+
+
+--- Download hadoop latest version
+
+  $ wget http://redrockdigimark.com/apachemirror/hadoop/common/stable/hadoop-2.9.1.tar.gz
+  $ shasum -a 256 hadoop-2.9.1.tar.gz 
+  $ tar -xzvf hadoop-2.9.1.tar.gz
+  $ sudo mv hadoop-2.9.1 /usr/local/hadoop
+  $ sudo chown -R hduser:hadoop /usr/local/hadoop
+
+
+--- Setup Configuration Files
+
+The following files will have to be modified to complete the Hadoop setup:
+
+	~/.bashrc
+
+	If you want to get the default java path.
+	$ readlink -f /usr/bin/java | sed "s:bin/java::"
+	output
+	/usr/lib/jvm/java-8-oracle/jre/
+
+	--> hduser@laptop:~$ vi ~/.bashrc
+
+	#HADOOP VARIABLES START
+	export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+	export HADOOP_INSTALL=/usr/local/hadoop
+	export PATH=$PATH:$HADOOP_INSTALL/bin
+	export PATH=$PATH:$HADOOP_INSTALL/sbin
+	export HADOOP_MAPRED_HOME=$HADOOP_INSTALL
+	export HADOOP_COMMON_HOME=$HADOOP_INSTALL
+	export HADOOP_HDFS_HOME=$HADOOP_INSTALL
+	export YARN_HOME=$HADOOP_INSTALL
+	export HADOOP_COMMON_LIB_NATIVE_DIR=$HADOOP_INSTALL/lib/native
+	export HADOOP_OPTS="-Djava.library.path=$HADOOP_INSTALL/lib"
+	#HADOOP VARIABLES END
+
+	hduser@laptop:~$ source ~/.bashrc
+
+	--> /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+		We need to set JAVA_HOME by modifying hadoop-env.sh file.
+		hduser@laptop:~$ vim /usr/local/hadoop/etc/hadoop/hadoop-env.sh
+		export JAVA_HOME=/usr/lib/jvm/java-8-oracle
+
+
+	--> /usr/local/hadoop/etc/hadoop/core-site.xml
+
+		The /usr/local/hadoop/etc/hadoop/core-site.xml file contains configuration properties that Hadoop uses when starting up. 
+		This file can be used to override the default settings that Hadoop starts with.
+
+		hduser@laptop:~$ sudo mkdir -p /app/hadoop/tmp
+		hduser@laptop:~$ sudo chown hduser:hadoop /app/hadoop/tmp
+		Open the file and enter the following in between the <configuration></configuration> tag:
+
+		hduser@laptop:~$ vim /usr/local/hadoop/etc/hadoop/core-site.xml
+
+		<configuration>
+		 <property>
+		  <name>hadoop.tmp.dir</name>
+		  <value>/app/hadoop/tmp</value>
+		  <description>A base for other temporary directories.</description>
+		 </property>
+
+		 <property>
+		  <name>fs.default.name</name>
+		  <value>hdfs://localhost:54310</value>
+		  <description>The name of the default file system.  A URI whose
+		  scheme and authority determine the FileSystem implementation.  The
+		  uri's scheme determines the config property (fs.SCHEME.impl) naming
+		  the FileSystem implementation class.  The uri's authority is used to
+		  determine the host, port, etc. for a filesystem.</description>
+		 </property>
+		</configuration>
+
+	---> /usr/local/hadoop/etc/hadoop/mapred-site.xml.template
+		$ cp /usr/local/hadoop/etc/hadoop/mapred-site.xml.template /usr/local/hadoop/etc/hadoop/mapred-site.xml
+
+		The mapred-site.xml file is used to specify which framework is being used for MapReduce.
+		We need to enter the following content in between the <configuration></configuration> tag:
+
+		<configuration>
+		 <property>
+		  <name>mapred.job.tracker</name>
+		  <value>localhost:54311</value>
+		  <description>The host and port that the MapReduce job tracker runs
+		  at.  If "local", then jobs are run in-process as a single map
+		  and reduce task.
+		  </description>
+		 </property>
+		</configuration>
+
+	---> /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+
+	The /usr/local/hadoop/etc/hadoop/hdfs-site.xml file needs to be configured for each host in the cluster that is being used. 
+	It is used to specify the directories which will be used as the namenode and the datanode on that host.
+
+	Before editing this file, we need to create two directories which will contain the namenode and the datanode for this Hadoop installation. 
+	This can be done using the following commands:
+
+	hduser@laptop:~$ sudo mkdir -p /usr/local/hadoop_store/hdfs/namenode
+	hduser@laptop:~$ sudo mkdir -p /usr/local/hadoop_store/hdfs/datanode
+	hduser@laptop:~$ sudo chown -R hduser:hadoop /usr/local/hadoop_store
+
+	Open the file and enter the following content in between the <configuration></configuration> tag:
+
+	hduser@laptop:~$ vim /usr/local/hadoop/etc/hadoop/hdfs-site.xml
+
+	<configuration>
+	 <property>
+	  <name>dfs.replication</name>
+	  <value>1</value>
+	  <description>Default block replication.
+	  The actual number of replications can be specified when the file is created.
+	  The default is used if replication is not specified in create time.
+	  </description>
+	 </property>
+	 <property>
+	   <name>dfs.namenode.name.dir</name>
+	   <value>file:/usr/local/hadoop_store/hdfs/namenode</value>
+	 </property>
+	 <property>
+	   <name>dfs.datanode.data.dir</name>
+	   <value>file:/usr/local/hadoop_store/hdfs/datanode</value>
+	 </property>
+	</configuration>
+
+
+========================= Format the New Hadoop Filesystem
+Now, the Hadoop file system needs to be formatted so that we can start to use it. The format command should be issued with write permission since it creates current directory 
+under /usr/local/hadoop_store/hdfs/namenode folder:
+
+hduser@laptop:~$ hadoop namenode -format
+
+Note that hadoop namenode -format command should be executed once before we start using Hadoop. 
+If this command is executed again after Hadoop has been used, it'll destroy all the data on the Hadoop file system.
+
+
+========================= Starting Hadoop
+
+Now it's time to start the newly installed single node cluster. 
+We can use start-all.sh or (start-dfs.sh and start-yarn.sh)
+
+hduser@laptop:~$ cd /usr/local/hadoop/sbin
+hduser@laptop:/usr/local/hadoop/sbin$ start-all.sh
+
+We can check if it's really up and running:
+
+hduser@laptop:/usr/local/hadoop/sbin$ jps
+
+===== Hadoop Web Interfaces
+http://localhost:50070/ - web UI of the NameNode daemon
